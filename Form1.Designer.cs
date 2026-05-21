@@ -1,4 +1,4 @@
-﻿namespace ImagePasteHelper
+namespace ImagePasteHelper
 {
     partial class Form1
     {
@@ -30,6 +30,7 @@
         {
             convertButton = new Button();
             statusLabel = new Label();
+            autoMonitorCheckBox = new CheckBox();
             SuspendLayout();
             // 
             // convertButton
@@ -45,18 +46,30 @@
             // statusLabel
             // 
             statusLabel.AutoSize = true;
-            statusLabel.Location = new Point(20, 70);
+            statusLabel.Location = new Point(20, 105);
             statusLabel.MaximumSize = new Size(540, 0);
             statusLabel.Name = "statusLabel";
             statusLabel.Size = new Size(123, 15);
             statusLabel.TabIndex = 1;
             statusLabel.Text = "Status: waiting for action";
             // 
+            // autoMonitorCheckBox
+            // 
+            autoMonitorCheckBox.AutoSize = true;
+            autoMonitorCheckBox.Location = new Point(20, 70);
+            autoMonitorCheckBox.Name = "autoMonitorCheckBox";
+            autoMonitorCheckBox.Size = new Size(236, 19);
+            autoMonitorCheckBox.TabIndex = 2;
+            autoMonitorCheckBox.Text = "Enable automatic clipboard monitoring";
+            autoMonitorCheckBox.UseVisualStyleBackColor = true;
+            autoMonitorCheckBox.CheckedChanged += autoMonitorCheckBox_CheckedChanged;
+            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(600, 140);
+            ClientSize = new Size(600, 170);
+            Controls.Add(autoMonitorCheckBox);
             Controls.Add(statusLabel);
             Controls.Add(convertButton);
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -72,5 +85,6 @@
 
         private Button convertButton;
         private Label statusLabel;
+        private CheckBox autoMonitorCheckBox;
     }
 }

@@ -1,7 +1,14 @@
+using System.Collections.Specialized;
+using System.Runtime.InteropServices;
+
 namespace ImagePasteHelper
 {
     public partial class Form1 : Form
     {
+        private const int WmClipboardUpdate = 0x031D;
+        private const int ClipboardRetryCount = 5;
+        private const int ClipboardRetryDelayMs = 100;
+
         private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
             ".jpg",
@@ -10,58 +17,213 @@ namespace ImagePasteHelper
             ".bmp"
         };
 
+        private bool _ignoreNextClipboardUpdate;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool AddClipboardFormatListener(IntPtr hwnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
+
         public Form1()
         {
             InitializeComponent();
+            autoMonitorCheckBox.Checked = true;
+            statusLabel.Text = "Status: automatic monitoring enabled.";
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            AddClipboardFormatListener(Handle);
+        }
+
+        protected override void OnHandleDestroyed(EventArgs e)
+        {
+            RemoveClipboardFormatListener(Handle);
+            base.OnHandleDestroyed(e);
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WmClipboardUpdate)
+            {
+                HandleClipboardUpdate();
+            }
+
+            base.WndProc(ref m);
         }
 
         private void convertButton_Click(object sender, EventArgs e)
         {
-            statusLabel.Text = "Status: processing...";
+            ConvertClipboardImageFile(manualMode: true);
+        }
 
-            if (!Clipboard.ContainsFileDropList())
+        private void autoMonitorCheckBox_CheckedChanged(object sender, EventArgs e)
+        {
+            statusLabel.Text = autoMonitorCheckBox.Checked
+                ? "Status: automatic monitoring enabled."
+                : "Status: automatic monitoring disabled.";
+        }
+
+        private void HandleClipboardUpdate()
+        {
+            if (_ignoreNextClipboardUpdate)
             {
-                statusLabel.Text = "Error: no copied file found in clipboard.";
+                _ignoreNextClipboardUpdate = false;
                 return;
             }
 
-            var files = Clipboard.GetFileDropList();
+            if (!autoMonitorCheckBox.Checked)
+            {
+                statusLabel.Text = "Status: automatic monitoring disabled.";
+                return;
+            }
+
+            ConvertClipboardImageFile(manualMode: false);
+        }
+
+        private void ConvertClipboardImageFile(bool manualMode)
+        {
+            statusLabel.Text = manualMode
+                ? "Status: manual conversion started..."
+                : "Status: automatic clipboard check...";
+
+            if (!TryGetSingleSupportedImageFile(out var filePath, out var error))
+            {
+                if (manualMode)
+                {
+                    statusLabel.Text = error;
+                }
+
+                return;
+            }
+
+            if (!TryLoadImageWithRetry(filePath!, out var bitmap, out var loadError))
+            {
+                statusLabel.Text = loadError;
+                return;
+            }
+
+            using (bitmap)
+            {
+                if (!TrySetClipboardImageWithRetry(bitmap!, out var setError))
+                {
+                    statusLabel.Text = setError;
+                    return;
+                }
+            }
+
+            _ignoreNextClipboardUpdate = true;
+            statusLabel.Text = manualMode
+                ? "Success: manual conversion complete. You can now paste as image data."
+                : "Success: automatic conversion complete. Copied image file is now image data.";
+        }
+
+        private static bool TryGetSingleSupportedImageFile(out string? filePath, out string error)
+        {
+            filePath = null;
+            error = "";
+
+            if (!Clipboard.ContainsFileDropList())
+            {
+                error = "Error: no copied file found in clipboard.";
+                return false;
+            }
+
+            StringCollection? files;
+            try
+            {
+                files = Clipboard.GetFileDropList();
+            }
+            catch
+            {
+                error = "Error: clipboard is busy. Try again.";
+                return false;
+            }
+
             if (files.Count == 0)
             {
-                statusLabel.Text = "Error: no copied file found in clipboard.";
-                return;
+                error = "Error: no copied file found in clipboard.";
+                return false;
             }
 
             if (files.Count > 1)
             {
-                statusLabel.Text = "Error: multiple files copied. Copy exactly one image file.";
-                return;
+                error = "Error: multiple files copied. Copy exactly one image file.";
+                return false;
             }
 
-            var filePath = files[0];
-            var extension = Path.GetExtension(filePath);
+            var candidate = files[0];
+            var extension = Path.GetExtension(candidate);
             if (!SupportedExtensions.Contains(extension))
             {
-                statusLabel.Text = "Error: unsupported file type. Use .jpg, .jpeg, .png, or .bmp.";
-                return;
+                error = "Error: unsupported file type. Use .jpg, .jpeg, .png, or .bmp.";
+                return false;
             }
 
-            if (!File.Exists(filePath))
+            if (!File.Exists(candidate))
             {
-                statusLabel.Text = "Error: file does not exist.";
-                return;
+                error = "Error: file does not exist.";
+                return false;
             }
 
-            try
+            filePath = candidate;
+            return true;
+        }
+
+        private static bool TryLoadImageWithRetry(string filePath, out Bitmap? bitmap, out string error)
+        {
+            bitmap = null;
+            error = "Error: image load failed.";
+
+            for (var attempt = 1; attempt <= ClipboardRetryCount; attempt++)
             {
-                using var image = Image.FromFile(filePath);
-                Clipboard.SetImage(new Bitmap(image));
-                statusLabel.Text = "Success: image copied as image data. You can now paste in Excel.";
+                try
+                {
+                    using var image = Image.FromFile(filePath);
+                    bitmap = new Bitmap(image);
+                    return true;
+                }
+                catch
+                {
+                    if (attempt < ClipboardRetryCount)
+                    {
+                        Thread.Sleep(ClipboardRetryDelayMs);
+                        continue;
+                    }
+
+                    error = "Error: image load failed after retries.";
+                }
             }
-            catch
+
+            return false;
+        }
+
+        private static bool TrySetClipboardImageWithRetry(Image image, out string error)
+        {
+            error = "Error: failed to write image data to clipboard.";
+
+            for (var attempt = 1; attempt <= ClipboardRetryCount; attempt++)
             {
-                statusLabel.Text = "Error: image load failed.";
+                try
+                {
+                    Clipboard.SetImage(image);
+                    return true;
+                }
+                catch
+                {
+                    if (attempt < ClipboardRetryCount)
+                    {
+                        Thread.Sleep(ClipboardRetryDelayMs);
+                        continue;
+                    }
+
+                    error = "Error: clipboard is busy and image conversion failed after retries.";
+                }
             }
+
+            return false;
         }
     }
 }
