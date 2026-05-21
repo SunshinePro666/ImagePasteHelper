@@ -18,6 +18,9 @@ namespace ImagePasteHelper
         };
 
         private bool _ignoreNextClipboardUpdate;
+        private bool _isExiting;
+        private readonly NotifyIcon _trayIcon;
+        private readonly ToolStripMenuItem _toggleMonitoringMenuItem;
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool AddClipboardFormatListener(IntPtr hwnd);
@@ -28,8 +31,34 @@ namespace ImagePasteHelper
         public Form1()
         {
             InitializeComponent();
+
+            var trayMenu = new ContextMenuStrip();
+            var showMenuItem = new ToolStripMenuItem("Show", null, (_, _) => ShowFromTray());
+            _toggleMonitoringMenuItem = new ToolStripMenuItem();
+            _toggleMonitoringMenuItem.Click += (_, _) => autoMonitorCheckBox.Checked = !autoMonitorCheckBox.Checked;
+            var exitMenuItem = new ToolStripMenuItem("Exit", null, (_, _) => ExitApplication());
+
+            trayMenu.Items.Add(showMenuItem);
+            trayMenu.Items.Add(_toggleMonitoringMenuItem);
+            trayMenu.Items.Add(new ToolStripSeparator());
+            trayMenu.Items.Add(exitMenuItem);
+
+            _trayIcon = new NotifyIcon
+            {
+                Icon = SystemIcons.Application,
+                Visible = true,
+                Text = "Image Paste Helper",
+                ContextMenuStrip = trayMenu
+            };
+
+            _trayIcon.DoubleClick += (_, _) => ShowFromTray();
+
+            Resize += Form1_Resize;
+            FormClosing += Form1_FormClosing;
+
             autoMonitorCheckBox.Checked = true;
             statusLabel.Text = "Status: automatic monitoring enabled.";
+            UpdateToggleMenuText();
         }
 
         protected override void OnHandleCreated(EventArgs e)
@@ -41,6 +70,8 @@ namespace ImagePasteHelper
         protected override void OnHandleDestroyed(EventArgs e)
         {
             RemoveClipboardFormatListener(Handle);
+            _trayIcon.Visible = false;
+            _trayIcon.Dispose();
             base.OnHandleDestroyed(e);
         }
 
@@ -64,6 +95,57 @@ namespace ImagePasteHelper
             statusLabel.Text = autoMonitorCheckBox.Checked
                 ? "Status: automatic monitoring enabled."
                 : "Status: automatic monitoring disabled.";
+
+            UpdateToggleMenuText();
+        }
+
+        private void Form1_Resize(object? sender, EventArgs e)
+        {
+            if (WindowState == FormWindowState.Minimized)
+            {
+                HideToTray("Status: window minimized to tray. Monitoring continues.");
+            }
+        }
+
+        private void Form1_FormClosing(object? sender, FormClosingEventArgs e)
+        {
+            if (_isExiting)
+            {
+                return;
+            }
+
+            e.Cancel = true;
+            HideToTray("Status: window hidden to tray. Monitoring continues.");
+        }
+
+        private void ShowFromTray()
+        {
+            Show();
+            WindowState = FormWindowState.Normal;
+            Activate();
+            statusLabel.Text = "Status: window shown from tray.";
+        }
+
+        private void HideToTray(string message)
+        {
+            Hide();
+            statusLabel.Text = message;
+        }
+
+        private void ExitApplication()
+        {
+            _isExiting = true;
+            statusLabel.Text = "Status: exiting application.";
+            _trayIcon.Visible = false;
+            Close();
+            Application.Exit();
+        }
+
+        private void UpdateToggleMenuText()
+        {
+            _toggleMonitoringMenuItem.Text = autoMonitorCheckBox.Checked
+                ? "Disable automatic monitoring"
+                : "Enable automatic monitoring";
         }
 
         private void HandleClipboardUpdate()
